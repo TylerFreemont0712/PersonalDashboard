@@ -1,4 +1,4 @@
-"""Income tracking widget – displays, filters, and manages income entries."""
+"""Income tracking widget -- displays, filters, and manages income entries."""
 from __future__ import annotations
 
 from datetime import date
@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
 from src.services.export_csv import export_income_csv
 from src.services.income_service import IncomeService
 from src.ui.dialogs.income_dialog import IncomeDialog
+from src.ui.theme import INCOME_GREEN
+from src.ui.widgets.charts import SparklineWidget
 
 
 class IncomeWidget(QWidget):
@@ -39,10 +42,26 @@ class IncomeWidget(QWidget):
         # ---- main layout -------------------------------------------------------
         layout = QVBoxLayout(self)
 
+        # ---- stat cards row ----------------------------------------------------
+        stats_row = QHBoxLayout()
+
+        self._gross_card = self._build_stat_card("GROSS INCOME", "\u00a50")
+        self._entries_card = self._build_stat_card("ENTRIES", "0")
+
+        stats_row.addWidget(self._gross_card)
+        stats_row.addWidget(self._entries_card)
+
+        layout.addLayout(stats_row)
+
+        # ---- sparkline ---------------------------------------------------------
+        self._sparkline = SparklineWidget()
+        layout.addWidget(self._sparkline)
+
         # ---- toolbar ------------------------------------------------------------
         toolbar = QHBoxLayout()
 
-        self._add_btn = QPushButton("Add Income")
+        self._add_btn = QPushButton("+ ADD INCOME")
+        self._add_btn.setObjectName("accentBtn")
         self._add_btn.clicked.connect(self._on_add)
         toolbar.addWidget(self._add_btn)
 
@@ -66,7 +85,7 @@ class IncomeWidget(QWidget):
 
         toolbar.addStretch()
 
-        self._export_btn = QPushButton("Export CSV")
+        self._export_btn = QPushButton("EXPORT CSV")
         self._export_btn.clicked.connect(self._on_export)
         toolbar.addWidget(self._export_btn)
 
@@ -87,17 +106,34 @@ class IncomeWidget(QWidget):
 
         layout.addWidget(self._table)
 
-        # ---- summary panel ------------------------------------------------------
-        summary_layout = QHBoxLayout()
-        self._summary_label = QLabel("Gross Income: \u00a50")
-        self._summary_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        summary_layout.addStretch()
-        summary_layout.addWidget(self._summary_label)
-        summary_layout.addStretch()
-        layout.addLayout(summary_layout)
-
         # ---- initial data load --------------------------------------------------
         self.refresh_data()
+
+    # ------------------------------------------------------------------
+    # Stat card builder
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_stat_card(title: str, initial_value: str) -> QFrame:
+        """Create a framed stat card with a value label and a description label."""
+        card = QFrame()
+        card.setObjectName("statCard")
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        value_label = QLabel(initial_value)
+        value_label.setObjectName("statValue")
+        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        desc_label = QLabel(title)
+        desc_label.setObjectName("statLabel")
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        card_layout.addWidget(value_label)
+        card_layout.addWidget(desc_label)
+
+        return card
 
     # ------------------------------------------------------------------
     # Filters
@@ -130,7 +166,28 @@ class IncomeWidget(QWidget):
             total = self._service.monthly_total(year, month)
 
         self._populate_table(incomes)
-        self._summary_label.setText(f"Gross Income: \u00a5{total:,}")
+
+        # update stat cards
+        self._update_stat_card(self._gross_card, f"\u00a5{total:,}")
+        self._update_stat_card(self._entries_card, str(len(incomes)))
+
+        # Mark the gross income value with the accent-green object name
+        gross_value_label = self._gross_card.findChild(QLabel, "statValue")
+        if gross_value_label is not None:
+            gross_value_label.setObjectName("accentGreen")
+
+        # update sparkline with monthly totals for the selected year
+        monthly_values = [
+            self._service.monthly_total(year, m) for m in range(1, 13)
+        ]
+        self._sparkline.set_data(monthly_values, INCOME_GREEN)
+
+    @staticmethod
+    def _update_stat_card(card: QFrame, value: str) -> None:
+        """Update the value label inside a stat card."""
+        labels = card.findChildren(QLabel)
+        if labels:
+            labels[0].setText(value)
 
     def _populate_table(self, incomes) -> None:
         self._table.setRowCount(0)

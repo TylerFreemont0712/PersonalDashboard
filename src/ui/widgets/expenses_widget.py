@@ -1,18 +1,20 @@
 """Bills & Expenses widget for the personal dashboard."""
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QPushButton, QComboBox, QLabel, QMessageBox, QFileDialog,
-    QHeaderView, QAbstractItemView, QMenu)
+    QHeaderView, QAbstractItemView, QMenu, QFrame)
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QAction
 
 from src.services.expense_service import ExpenseService
 from src.services.export_csv import export_expenses_csv
 from src.ui.dialogs.expense_dialog import ExpenseDialog
+from src.ui.widgets.charts import DonutChartWidget
 
 
 _COLUMNS = ["Date", "Amount (\u00a5)", "Category", "Payment Method", "Recurrence", "Notes"]
@@ -35,10 +37,28 @@ class ExpensesWidget(QWidget):
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
 
+        # --- Stat cards row ---
+        stats_layout = QHBoxLayout()
+
+        self._total_card, self._total_value_label = self._make_stat_card("Total Expenses", "\u00a50")
+        stats_layout.addWidget(self._total_card)
+
+        self._count_card, self._count_value_label = self._make_stat_card("Entries", "0")
+        stats_layout.addWidget(self._count_card)
+
+        stats_layout.addStretch()
+        root_layout.addLayout(stats_layout)
+
+        # --- Donut chart ---
+        self._donut_chart = DonutChartWidget()
+        self._donut_chart.setFixedHeight(200)
+        root_layout.addWidget(self._donut_chart)
+
         # --- Toolbar ---
         toolbar_layout = QHBoxLayout()
 
-        self._add_btn = QPushButton("Add Expense")
+        self._add_btn = QPushButton("+ ADD EXPENSE")
+        self._add_btn.setObjectName("accentBtn")
         toolbar_layout.addWidget(self._add_btn)
 
         toolbar_layout.addStretch()
@@ -61,7 +81,7 @@ class ExpensesWidget(QWidget):
 
         toolbar_layout.addStretch()
 
-        self._export_btn = QPushButton("Export CSV")
+        self._export_btn = QPushButton("EXPORT CSV")
         toolbar_layout.addWidget(self._export_btn)
 
         root_layout.addLayout(toolbar_layout)
@@ -82,11 +102,32 @@ class ExpensesWidget(QWidget):
         # --- Summary panel ---
         summary_layout = QHBoxLayout()
         self._summary_label = QLabel()
-        self._summary_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self._summary_label.setObjectName("statValue")
         summary_layout.addStretch()
         summary_layout.addWidget(self._summary_label)
         summary_layout.addStretch()
         root_layout.addLayout(summary_layout)
+
+    @staticmethod
+    def _make_stat_card(title: str, initial_value: str) -> tuple[QFrame, QLabel]:
+        """Create a stat card QFrame containing a title label and a value label."""
+        card = QFrame()
+        card.setObjectName("statCard")
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        value_label = QLabel(initial_value)
+        value_label.setObjectName("statValue")
+        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(value_label)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("statLabel")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_label)
+
+        return card, value_label
 
     # ------------------------------------------------------------------
     # Signal wiring
@@ -123,9 +164,10 @@ class ExpensesWidget(QWidget):
     # ------------------------------------------------------------------
 
     def refresh_data(self) -> None:
-        """Reload expenses from the service and repopulate the table."""
+        """Reload expenses from the service and repopulate all views."""
         expenses = self._fetch_expenses()
 
+        # -- Populate table --
         self._table.setRowCount(len(expenses))
         for row, expense in enumerate(expenses):
             # Date
@@ -152,6 +194,19 @@ class ExpensesWidget(QWidget):
             # Notes
             self._table.setItem(row, 5, QTableWidgetItem(expense.notes))
 
+        # -- Update stat cards --
+        total = sum(e.amount for e in expenses)
+        self._total_value_label.setText(f"\u00a5{total:,}")
+        self._count_value_label.setText(str(len(expenses)))
+
+        # -- Update donut chart with category breakdown --
+        category_totals: dict[str, int] = defaultdict(int)
+        for expense in expenses:
+            category_totals[expense.category_label] += expense.amount
+        chart_items = sorted(category_totals.items(), key=lambda x: x[1], reverse=True)
+        self._donut_chart.set_data(chart_items, center_label=f"\u00a5{total:,}")
+
+        # -- Update summary --
         self._update_summary(expenses)
 
     # ------------------------------------------------------------------

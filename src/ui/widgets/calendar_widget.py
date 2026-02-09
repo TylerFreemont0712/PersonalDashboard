@@ -1,47 +1,44 @@
 """Calendar & Scheduling module widget.
 
-Provides month-view calendar with color-coded events, day detail panel,
-and day/week/month navigation.
+Fully custom-painted month grid (no HTML in buttons), day detail panel
+with timeline view, and month/day navigation.
 """
 from __future__ import annotations
 
 import calendar
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
-from PyQt6.QtCore import Qt, QDate, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QPalette
+from PyQt6.QtCore import QRectF, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QComboBox,
-    QFrame,
-    QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from src.models.event import EVENT_CATEGORY_COLORS, Event, EventCategory
+from src.models.event import EVENT_CATEGORY_COLORS, Event
 from src.services.event_service import EventService
 from src.ui.dialogs.event_dialog import EventDialog
+from src.ui import theme as T
+
+_WEEKDAY_HEADERS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 
 
-_WEEKDAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+# ── Custom-Painted Month Grid ───────────────────────────────────────────
 
+class MonthGridWidget(QWidget):
+    """QPainter-rendered month calendar. No HTML, no button artifacts."""
 
-class CalendarGrid(QWidget):
-    """A month-view calendar grid that emits a signal when a day is clicked."""
-
-    date_clicked = pyqtSignal(object)  # emits a date
+    date_clicked = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -49,192 +46,389 @@ class CalendarGrid(QWidget):
         self._month = date.today().month
         self._events_by_day: dict[int, list[Event]] = {}
         self._selected_day: int | None = date.today().day
+        self._day_rects: dict[int, QRectF] = {}
+        self.setMinimumHeight(420)
+        self.setMouseTracking(True)
+        self._hover_day: int | None = None
 
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-
-        self._grid = QGridLayout()
-        self._grid.setSpacing(2)
-
-        # Weekday headers
-        for col, header in enumerate(_WEEKDAY_HEADERS):
-            lbl = QLabel(header)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("font-weight: bold; padding: 4px;")
-            self._grid.addWidget(lbl, 0, col)
-
-        # Day cells: 6 rows x 7 cols (covers any month layout)
-        self._cells: list[list[QPushButton]] = []
-        for row in range(6):
-            row_cells: list[QPushButton] = []
-            for col in range(7):
-                btn = QPushButton("")
-                btn.setFixedHeight(70)
-                btn.setMinimumWidth(80)
-                btn.setStyleSheet(
-                    "text-align: top; padding: 4px; font-size: 11px;"
-                )
-                btn.clicked.connect(self._make_click_handler(row, col))
-                self._grid.addWidget(btn, row + 1, col)
-                row_cells.append(btn)
-            self._cells.append(row_cells)
-
-        self._layout.addLayout(self._grid)
-
-    def _make_click_handler(self, row: int, col: int):
-        def handler() -> None:
-            btn = self._cells[row][col]
-            day_text = btn.property("day")
-            if day_text and day_text > 0:
-                self._selected_day = day_text
-                self._render()
-                self.date_clicked.emit(date(self._year, self._month, day_text))
-        return handler
-
-    def set_month(
-        self, year: int, month: int, events: list[Event]
-    ) -> None:
+    def set_month(self, year: int, month: int, events: list[Event]) -> None:
         self._year = year
         self._month = month
         self._events_by_day = {}
         for ev in events:
-            day = ev.event_date.day
-            self._events_by_day.setdefault(day, []).append(ev)
-        self._render()
+            self._events_by_day.setdefault(ev.event_date.day, []).append(ev)
+        if self._selected_day:
+            max_day = calendar.monthrange(year, month)[1]
+            if self._selected_day > max_day:
+                self._selected_day = 1
+        self.update()
 
-    def _render(self) -> None:
-        cal = calendar.Calendar(firstweekday=0)  # Monday start
-        days = list(cal.itermonthdays(self._year, self._month))
+    def set_selected(self, day: int) -> None:
+        self._selected_day = day
+        self.update()
+
+    def mousePressEvent(self, event) -> None:
+        pos = event.position()
+        for day, rect in self._day_rects.items():
+            if rect.contains(pos):
+                self._selected_day = day
+                self.update()
+                self.date_clicked.emit(date(self._year, self._month, day))
+                return
+
+    def mouseMoveEvent(self, event) -> None:
+        pos = event.position()
+        new_hover = None
+        for day, rect in self._day_rects.items():
+            if rect.contains(pos):
+                new_hover = day
+                break
+        if new_hover != self._hover_day:
+            self._hover_day = new_hover
+            self.update()
+
+    def leaveEvent(self, event) -> None:
+        self._hover_day = None
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        painter.fillRect(self.rect(), QColor(T.BG_DARKEST))
+
+        header_h = 30
+        cell_w = w / 7
+        rows = 6
+        cell_h = (h - header_h) / rows
+
+        # Weekday headers
+        header_font = QFont("monospace", 10, QFont.Weight.Bold)
+        painter.setFont(header_font)
+        painter.setPen(QColor(T.ACCENT_CYAN))
+        for col, hdr in enumerate(_WEEKDAY_HEADERS):
+            rect = QRectF(col * cell_w, 0, cell_w, header_h)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, hdr)
+
+        painter.setPen(QPen(QColor(T.BORDER), 1))
+        painter.drawLine(0, int(header_h), w, int(header_h))
+
+        # Day cells
+        cal_obj = calendar.Calendar(firstweekday=0)
+        days = list(cal_obj.itermonthdays(self._year, self._month))
+        today = date.today()
+
+        day_font = QFont("monospace", 13, QFont.Weight.Bold)
+        event_font = QFont("monospace", 9)
+        self._day_rects.clear()
 
         idx = 0
-        for row in range(6):
+        for row in range(rows):
             for col in range(7):
-                btn = self._cells[row][col]
-                if idx < len(days):
-                    day = days[idx]
-                else:
-                    day = 0
+                if idx >= len(days):
+                    break
+                day = days[idx]
                 idx += 1
 
+                x = col * cell_w
+                y = header_h + row * cell_h
+                cell_rect = QRectF(x + 1, y + 1, cell_w - 2, cell_h - 2)
+
                 if day == 0:
-                    btn.setText("")
-                    btn.setProperty("day", 0)
-                    btn.setStyleSheet(
-                        "background-color: #f5f5f5; border: 1px solid #ddd;"
-                        " text-align: top; padding: 4px; font-size: 11px;"
-                    )
-                    btn.setEnabled(False)
+                    painter.fillRect(cell_rect, QColor(T.CAL_EMPTY_BG))
+                    painter.setPen(QPen(QColor(T.BORDER), 0.5))
+                    painter.drawRect(cell_rect)
                     continue
 
-                btn.setEnabled(True)
-                btn.setProperty("day", day)
+                self._day_rects[day] = cell_rect
 
-                # Build cell text
-                lines = [f"<b>{day}</b>"]
-                events_today = self._events_by_day.get(day, [])
-                for ev in events_today[:3]:  # Show max 3 event indicators
-                    color = ev.display_color
-                    short = ev.title[:12]
-                    lines.append(
-                        f'<span style="color:{color};">● {short}</span>'
-                    )
-                if len(events_today) > 3:
-                    lines.append(f"<i>+{len(events_today) - 3} more</i>")
-
-                btn.setText("<br>".join(lines))
-
-                # Highlight selection and today
-                today = date.today()
                 is_today = (
                     self._year == today.year
                     and self._month == today.month
                     and day == today.day
                 )
                 is_selected = day == self._selected_day
+                is_hover = day == self._hover_day
 
-                bg = "#ffffff"
-                border = "#ddd"
                 if is_selected:
-                    bg = "#e3f2fd"
-                    border = "#1976D2"
+                    bg = QColor(T.CAL_SELECTED_BG)
+                    border_color = QColor(T.CAL_SELECTED_BORDER)
+                    border_width = 2
                 elif is_today:
-                    bg = "#fff3e0"
-                    border = "#FF9800"
+                    bg = QColor(T.CAL_TODAY_BG)
+                    border_color = QColor(T.CAL_TODAY_BORDER)
+                    border_width = 2
+                elif is_hover:
+                    bg = QColor(T.BG_HOVER)
+                    border_color = QColor(T.BORDER)
+                    border_width = 1
+                else:
+                    bg = QColor(T.CAL_DAY_BG)
+                    border_color = QColor(T.CAL_DAY_BORDER)
+                    border_width = 1
 
-                btn.setStyleSheet(
-                    f"background-color: {bg}; border: 2px solid {border};"
-                    f" text-align: top; padding: 4px; font-size: 11px;"
+                painter.fillRect(cell_rect, bg)
+                painter.setPen(QPen(border_color, border_width))
+                painter.drawRect(cell_rect)
+
+                # Day number
+                painter.setFont(day_font)
+                if is_today:
+                    painter.setPen(QColor(T.ACCENT_GREEN))
+                elif is_selected:
+                    painter.setPen(QColor(T.ACCENT_CYAN))
+                else:
+                    painter.setPen(QColor(T.TEXT))
+                painter.drawText(
+                    QRectF(x + 6, y + 4, cell_w - 12, 18),
+                    Qt.AlignmentFlag.AlignLeft, str(day),
                 )
 
+                # Event indicators
+                events_today = self._events_by_day.get(day, [])
+                if events_today:
+                    painter.setFont(event_font)
+                    dot_y = y + 24
+                    for ev in events_today[:3]:
+                        if dot_y + 13 > y + cell_h - 2:
+                            break
+                        color = QColor(ev.display_color)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(color)
+                        painter.drawEllipse(QRectF(x + 5, dot_y + 2, 6, 6))
+                        painter.setPen(QColor(T.TEXT_DIM))
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        max_chars = max(int(cell_w / 7) - 2, 4)
+                        painter.drawText(
+                            QRectF(x + 14, dot_y, cell_w - 20, 13),
+                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                            ev.title[:max_chars],
+                        )
+                        dot_y += 14
+
+                    remaining = len(events_today) - 3
+                    if remaining > 0 and dot_y + 12 < y + cell_h:
+                        painter.setPen(QColor(T.TEXT_DIM))
+                        painter.drawText(
+                            QRectF(x + 5, dot_y, cell_w - 10, 12),
+                            Qt.AlignmentFlag.AlignLeft,
+                            f"+{remaining}",
+                        )
+
+        painter.end()
+
+
+# ── Daily Timeline View ─────────────────────────────────────────────────
+
+class DailyTimelineWidget(QWidget):
+    """Visual timeline for a single day showing events as blocks."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._events: list[Event] = []
+        self._date = date.today()
+        self.setMinimumHeight(600)
+        self.setMinimumWidth(300)
+
+    def set_data(self, d: date, events: list[Event]) -> None:
+        self._date = d
+        self._events = sorted(events, key=lambda e: e.start_time or time(0, 0))
+        self.setMinimumHeight(max(600, 50 * 18))
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        painter.fillRect(self.rect(), QColor(T.BG_DARKEST))
+
+        start_hour = 6
+        end_hour = 24
+        total_hours = end_hour - start_hour
+        left_margin = 55
+        right_margin = 15
+        top_margin = 10
+        hour_h = (h - top_margin * 2) / total_hours
+
+        time_font = QFont("monospace", 9)
+        event_font = QFont("monospace", 10, QFont.Weight.Bold)
+        painter.setFont(time_font)
+
+        # Hour gridlines
+        for i in range(total_hours + 1):
+            y = top_margin + i * hour_h
+            hr = start_hour + i
+            painter.setPen(QPen(QColor(T.BORDER), 0.5))
+            painter.drawLine(int(left_margin), int(y), int(w - right_margin), int(y))
+            painter.setPen(QColor(T.TEXT_DIM))
+            painter.drawText(
+                0, int(y - 8), left_margin - 8, 16,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{hr:02d}:00",
+            )
+
+        # Current time red line
+        if self._date == date.today():
+            from datetime import datetime
+            current = datetime.now().time()
+            if start_hour <= current.hour < end_hour:
+                frac = (current.hour - start_hour) + current.minute / 60
+                cy = top_margin + frac * hour_h
+                painter.setPen(QPen(QColor(T.ACCENT_RED), 2))
+                painter.drawLine(int(left_margin - 5), int(cy), int(w - right_margin), int(cy))
+                painter.setBrush(QColor(T.ACCENT_RED))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QRectF(left_margin - 9, cy - 4, 8, 8))
+
+        # Event blocks
+        track_w = w - left_margin - right_margin
+        for ev in self._events:
+            st = ev.start_time
+            et = ev.end_time
+
+            if st is None:
+                painter.fillRect(
+                    QRectF(left_margin, 0, track_w, top_margin - 1),
+                    QColor(ev.display_color).darker(150),
+                )
+                painter.setPen(QColor(T.TEXT_BRIGHT))
+                painter.setFont(event_font)
+                painter.drawText(
+                    QRectF(left_margin + 6, 0, track_w - 12, top_margin - 1),
+                    Qt.AlignmentFlag.AlignVCenter,
+                    f"ALL DAY: {ev.title}",
+                )
+                continue
+
+            if st.hour < start_hour:
+                continue
+
+            y1 = top_margin + ((st.hour - start_hour) + st.minute / 60) * hour_h
+            y2 = top_margin + ((et.hour - start_hour) + et.minute / 60) * hour_h if et else y1 + hour_h
+            block_h = max(y2 - y1, 22)
+            block_rect = QRectF(left_margin + 2, y1 + 1, track_w - 4, block_h - 2)
+
+            color = QColor(ev.display_color)
+            fill = QColor(color)
+            fill.setAlpha(50)
+            painter.fillRect(block_rect, fill)
+            painter.fillRect(
+                QRectF(block_rect.x(), block_rect.y(), 3, block_rect.height()), color,
+            )
+            painter.setPen(QPen(color, 1))
+            painter.drawRect(block_rect)
+
+            text_rect = QRectF(
+                block_rect.x() + 8, block_rect.y() + 2,
+                block_rect.width() - 12, block_rect.height() - 4,
+            )
+            painter.setPen(QColor(T.TEXT_BRIGHT))
+            painter.setFont(event_font)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignTop, ev.title)
+            if block_h > 30:
+                ts = st.strftime("%H:%M")
+                if et:
+                    ts += f"-{et.strftime('%H:%M')}"
+                painter.setFont(time_font)
+                painter.setPen(QColor(T.TEXT_DIM))
+                painter.drawText(
+                    QRectF(text_rect.x(), text_rect.y() + 16, text_rect.width(), 14),
+                    Qt.AlignmentFlag.AlignTop, ts,
+                )
+
+        painter.end()
+
+
+# ── Day Detail Panel ────────────────────────────────────────────────────
 
 class DayDetailPanel(QWidget):
-    """Shows events for a selected day with add/edit/delete actions."""
+    """Events for a selected day: list view + visual timeline."""
 
-    def __init__(
-        self, event_service: EventService, parent: QWidget | None = None
-    ) -> None:
+    events_changed = pyqtSignal()
+
+    def __init__(self, event_service: EventService, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._service = event_service
         self._current_date: date = date.today()
-        self._events: list[Event] = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
         self._date_label = QLabel()
-        self._date_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self._date_label.setObjectName("sectionTitle")
         layout.addWidget(self._date_label)
 
+        toggle_bar = QHBoxLayout()
+        self._list_btn = QPushButton("LIST")
+        self._list_btn.setFixedWidth(60)
+        self._list_btn.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        self._timeline_btn = QPushButton("TIMELINE")
+        self._timeline_btn.setFixedWidth(80)
+        self._timeline_btn.clicked.connect(lambda: self._stack.setCurrentIndex(1))
+        self._add_btn = QPushButton("+ ADD EVENT")
+        self._add_btn.setObjectName("accentBtn")
+        self._add_btn.clicked.connect(self._on_add)
+        toggle_bar.addWidget(self._list_btn)
+        toggle_bar.addWidget(self._timeline_btn)
+        toggle_bar.addStretch()
+        toggle_bar.addWidget(self._add_btn)
+        layout.addLayout(toggle_bar)
+
+        self._stack = QStackedWidget()
         self._list = QListWidget()
-        self._list.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._list.doubleClicked.connect(self._on_edit)
-        layout.addWidget(self._list)
+        self._stack.addWidget(self._list)
 
-        btn_layout = QHBoxLayout()
-        self._add_btn = QPushButton("Add Event")
-        self._add_btn.clicked.connect(self._on_add)
-        btn_layout.addWidget(self._add_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._timeline = DailyTimelineWidget()
+        scroll.setWidget(self._timeline)
+        self._stack.addWidget(scroll)
+        layout.addWidget(self._stack)
 
-        # Empty state
-        self._empty_label = QLabel("No events for this day.")
+        self._empty_label = QLabel("No events scheduled.")
+        self._empty_label.setObjectName("dimNote")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #888; padding: 20px;")
         layout.addWidget(self._empty_label)
 
     def show_date(self, d: date) -> None:
         self._current_date = d
-        self._date_label.setText(d.strftime("%A, %B %d, %Y"))
+        self._date_label.setText(f"{d.strftime('%A')}  {d.isoformat()}")
         self.refresh()
 
     def refresh(self) -> None:
-        self._events = self._service.get_events_for_date(self._current_date)
+        events = self._service.get_events_for_date(self._current_date)
         self._list.clear()
+        self._timeline.set_data(self._current_date, events)
 
-        if not self._events:
-            self._list.hide()
+        if not events:
+            self._stack.hide()
             self._empty_label.show()
             return
 
         self._empty_label.hide()
-        self._list.show()
+        self._stack.show()
+        self._stack.setCurrentIndex(1 if any(e.start_time for e in events) else 0)
 
-        for ev in self._events:
-            time_str = ""
+        for ev in events:
             if ev.start_time:
-                time_str = ev.start_time.strftime("%H:%M")
+                ts = ev.start_time.strftime("%H:%M")
                 if ev.end_time:
-                    time_str += f" - {ev.end_time.strftime('%H:%M')}"
-                time_str += "  "
-
-            text = f"{time_str}{ev.title}"
+                    ts += f" - {ev.end_time.strftime('%H:%M')}"
+                ts += "  "
+            else:
+                ts = "ALL DAY  "
+            text = f"{ts}{ev.title}"
             if ev.recurrence.value != "none":
                 text += f"  [{ev.recurrence.value}]"
-
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, ev.id)
             item.setForeground(QColor(ev.display_color))
@@ -243,30 +437,22 @@ class DayDetailPanel(QWidget):
     def _on_add(self) -> None:
         dlg = EventDialog(initial_date=self._current_date, parent=self)
         if dlg.exec():
-            event = dlg.get_event()
-            self._service.add_event(event)
+            self._service.add_event(dlg.get_event())
             self.refresh()
-            # Signal parent to refresh calendar grid
-            parent = self.parent()
-            if parent and hasattr(parent, "refresh_calendar"):
-                parent.refresh_calendar()
+            self.events_changed.emit()
 
     def _on_edit(self) -> None:
         item = self._list.currentItem()
         if item is None:
             return
-        event_id = item.data(Qt.ItemDataRole.UserRole)
-        event = self._service.get_event(event_id)
+        event = self._service.get_event(item.data(Qt.ItemDataRole.UserRole))
         if event is None:
             return
         dlg = EventDialog(event=event, parent=self)
         if dlg.exec():
-            updated = dlg.get_event()
-            self._service.update_event(updated)
+            self._service.update_event(dlg.get_event())
             self.refresh()
-            parent = self.parent()
-            if parent and hasattr(parent, "refresh_calendar"):
-                parent.refresh_calendar()
+            self.events_changed.emit()
 
     def _on_context_menu(self, pos) -> None:
         item = self._list.itemAt(pos)
@@ -274,81 +460,76 @@ class DayDetailPanel(QWidget):
             return
         self._list.setCurrentItem(item)
         menu = QMenu(self)
-        edit_action = QAction("Edit", self)
-        edit_action.triggered.connect(self._on_edit)
-        delete_action = QAction("Delete", self)
-        delete_action.triggered.connect(self._on_delete)
-        menu.addAction(edit_action)
-        menu.addAction(delete_action)
+        edit_act = QAction("Edit", self)
+        edit_act.triggered.connect(self._on_edit)
+        del_act = QAction("Delete", self)
+        del_act.triggered.connect(self._on_delete)
+        menu.addAction(edit_act)
+        menu.addAction(del_act)
         menu.exec(self._list.mapToGlobal(pos))
 
     def _on_delete(self) -> None:
         item = self._list.currentItem()
         if item is None:
             return
-        event_id = item.data(Qt.ItemDataRole.UserRole)
         reply = QMessageBox.question(
-            self,
-            "Confirm Delete",
-            "Delete this event?",
+            self, "Confirm Delete", "Delete this event?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._service.delete_event(event_id)
+            self._service.delete_event(item.data(Qt.ItemDataRole.UserRole))
             self.refresh()
-            parent = self.parent()
-            if parent and hasattr(parent, "refresh_calendar"):
-                parent.refresh_calendar()
+            self.events_changed.emit()
 
+
+# ── Main Calendar Widget ────────────────────────────────────────────────
 
 class CalendarWidget(QWidget):
-    """Full Calendar & Scheduling module combining month grid + day detail."""
+    """Full Calendar & Scheduling module: month grid + day detail + timeline."""
 
-    def __init__(
-        self, event_service: EventService, parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, event_service: EventService, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._service = event_service
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Navigation toolbar
         nav = QHBoxLayout()
-        self._prev_btn = QPushButton("◀ Prev")
+        nav.setContentsMargins(12, 8, 12, 8)
+        self._prev_btn = QPushButton("\u25c0")
+        self._prev_btn.setFixedWidth(36)
         self._prev_btn.clicked.connect(self._go_prev)
         nav.addWidget(self._prev_btn)
 
         self._month_label = QLabel()
+        self._month_label.setObjectName("sectionTitle")
         self._month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._month_label.setStyleSheet("font-size: 18px; font-weight: bold;")
         nav.addWidget(self._month_label, stretch=1)
 
-        self._today_btn = QPushButton("Today")
+        self._today_btn = QPushButton("TODAY")
+        self._today_btn.setObjectName("accentBtn")
         self._today_btn.clicked.connect(self._go_today)
         nav.addWidget(self._today_btn)
 
-        self._next_btn = QPushButton("Next ▶")
+        self._next_btn = QPushButton("\u25b6")
+        self._next_btn.setFixedWidth(36)
         self._next_btn.clicked.connect(self._go_next)
         nav.addWidget(self._next_btn)
-
         layout.addLayout(nav)
 
-        # Splitter: calendar grid on left, day detail on right
         splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        self._calendar = CalendarGrid()
+        self._calendar = MonthGridWidget()
         self._calendar.date_clicked.connect(self._on_date_clicked)
         splitter.addWidget(self._calendar)
 
-        self._detail = DayDetailPanel(event_service, parent=self)
+        self._detail = DayDetailPanel(event_service)
+        self._detail.events_changed.connect(self.refresh_calendar)
         splitter.addWidget(self._detail)
-
         splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-
+        splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter)
 
-        # Initial state
         today = date.today()
         self._year = today.year
         self._month = today.month
@@ -359,7 +540,7 @@ class CalendarWidget(QWidget):
         events = self._service.get_events_for_month(self._year, self._month)
         self._calendar.set_month(self._year, self._month, events)
         self._month_label.setText(
-            f"{calendar.month_name[self._month]} {self._year}"
+            f"{calendar.month_name[self._month].upper()}  {self._year}"
         )
 
     def _on_date_clicked(self, d: date) -> None:
