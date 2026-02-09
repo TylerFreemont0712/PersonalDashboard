@@ -21,6 +21,7 @@ from src.services.expense_service import ExpenseService
 from src.services.income_service import IncomeService
 from src.services.event_service import EventService
 from src.services.tax_service import TaxService
+from src.ui.widgets.dashboard_widget import DashboardWidget
 from src.ui.widgets.expenses_widget import ExpensesWidget
 from src.ui.widgets.income_widget import IncomeWidget
 from src.ui.widgets.tax_widget import TaxWidget
@@ -58,11 +59,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._tabs)
 
         # Module widgets
+        self._dashboard_widget = DashboardWidget(self._income_service, self._expense_service)
         self._expenses_widget = ExpensesWidget(self._expense_service)
         self._income_widget = IncomeWidget(self._income_service)
-        self._tax_widget = TaxWidget(self._tax_service)
+        self._tax_widget = TaxWidget(self._tax_service, self._income_service, self._expense_service)
         self._calendar_widget = CalendarWidget(self._event_service)
 
+        self._tabs.addTab(self._dashboard_widget, "Dashboard")
         self._tabs.addTab(self._calendar_widget, "Calendar")
         self._tabs.addTab(self._expenses_widget, "Expenses")
         self._tabs.addTab(self._income_widget, "Income")
@@ -93,24 +96,29 @@ class MainWindow(QMainWindow):
         # View menu
         view_menu = menu_bar.addMenu("&View")
 
+        dashboard_action = QAction("&Dashboard", self)
+        dashboard_action.setShortcut(QKeySequence("Ctrl+1"))
+        dashboard_action.triggered.connect(lambda: self._tabs.setCurrentIndex(0))
+        view_menu.addAction(dashboard_action)
+
         calendar_action = QAction("&Calendar", self)
-        calendar_action.setShortcut(QKeySequence("Ctrl+1"))
-        calendar_action.triggered.connect(lambda: self._tabs.setCurrentIndex(0))
+        calendar_action.setShortcut(QKeySequence("Ctrl+2"))
+        calendar_action.triggered.connect(lambda: self._tabs.setCurrentIndex(1))
         view_menu.addAction(calendar_action)
 
         expenses_action = QAction("&Expenses", self)
-        expenses_action.setShortcut(QKeySequence("Ctrl+2"))
-        expenses_action.triggered.connect(lambda: self._tabs.setCurrentIndex(1))
+        expenses_action.setShortcut(QKeySequence("Ctrl+3"))
+        expenses_action.triggered.connect(lambda: self._tabs.setCurrentIndex(2))
         view_menu.addAction(expenses_action)
 
         income_action = QAction("&Income", self)
-        income_action.setShortcut(QKeySequence("Ctrl+3"))
-        income_action.triggered.connect(lambda: self._tabs.setCurrentIndex(2))
+        income_action.setShortcut(QKeySequence("Ctrl+4"))
+        income_action.triggered.connect(lambda: self._tabs.setCurrentIndex(3))
         view_menu.addAction(income_action)
 
         tax_action = QAction("&Tax Prep", self)
-        tax_action.setShortcut(QKeySequence("Ctrl+4"))
-        tax_action.triggered.connect(lambda: self._tabs.setCurrentIndex(3))
+        tax_action.setShortcut(QKeySequence("Ctrl+5"))
+        tax_action.triggered.connect(lambda: self._tabs.setCurrentIndex(4))
         view_menu.addAction(tax_action)
 
         # Help menu
