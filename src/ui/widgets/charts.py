@@ -75,7 +75,7 @@ class BarChartWidget(QWidget):
 
         grid_pen = QPen(QColor(BORDER))
         grid_pen.setStyle(Qt.PenStyle.DotLine)
-        text_font = QFont("monospace", 9)
+        text_font = QFont("Meiryo UI", 8)
         painter.setFont(text_font)
 
         # Y-axis gridlines
@@ -208,7 +208,7 @@ class DonutChartWidget(QWidget):
         # Center text
         if self._center_label:
             painter.setPen(QColor(TEXT))
-            font = QFont("monospace", 11, QFont.Weight.Bold)
+            font = QFont("Meiryo UI", 10, QFont.Weight.Bold)
             painter.setFont(font)
             painter.drawText(
                 QRectF(cx - inner_r, cy - 12, inner_r * 2, 24),
@@ -219,7 +219,7 @@ class DonutChartWidget(QWidget):
         # Legend (right side)
         legend_x = int(chart_size + 30)
         legend_y = max(20, int(cy - len(self._slices) * 22 / 2))
-        font = QFont("monospace", 10)
+        font = QFont("Meiryo UI", 9)
         painter.setFont(font)
 
         for label, value, color in self._slices:
