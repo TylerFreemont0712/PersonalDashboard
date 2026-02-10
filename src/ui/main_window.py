@@ -63,7 +63,9 @@ class MainWindow(QMainWindow):
         self._expenses_widget = ExpensesWidget(self._expense_service)
         self._income_widget = IncomeWidget(self._income_service)
         self._tax_widget = TaxWidget(self._tax_service, self._income_service, self._expense_service)
-        self._calendar_widget = CalendarWidget(self._event_service)
+        self._calendar_widget = CalendarWidget(
+            self._event_service, self._income_service, self._expense_service,
+        )
 
         self._tabs.addTab(self._dashboard_widget, "Dashboard")
         self._tabs.addTab(self._calendar_widget, "Calendar")

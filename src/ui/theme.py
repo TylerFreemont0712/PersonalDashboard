@@ -60,18 +60,18 @@ def get_stylesheet() -> str:
     QTabBar::tab {{
         background: {BG_MID};
         color: {TEXT_DIM};
-        padding: 12px 8px;
+        padding: 8px 4px;
         border: 1px solid {BORDER};
         border-right: none;
-        min-width: 40px;
-        font-size: 12px;
+        min-width: 26px;
+        font-size: 11px;
         font-weight: bold;
-        letter-spacing: 1px;
+        letter-spacing: 0.5px;
     }}
     QTabBar::tab:selected {{
         background: {BG_DARK};
         color: {ACCENT_CYAN};
-        border-left: 3px solid {ACCENT_CYAN};
+        border-left: 2px solid {ACCENT_CYAN};
     }}
     QTabBar::tab:hover:!selected {{
         background: {BG_HOVER};
