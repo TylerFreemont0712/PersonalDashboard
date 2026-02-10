@@ -45,8 +45,8 @@ def get_stylesheet() -> str:
     QMainWindow, QWidget {{
         background-color: {BG_DARK};
         color: {TEXT};
-        font-family: "Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
-        font-size: 13px;
+        font-family: "Meiryo UI", "Yu Gothic UI", "Noto Sans CJK JP", "Segoe UI", sans-serif;
+        font-size: 12px;
     }}
 
     /* ── Tab Bar ─────────────────────────────────────────── */
@@ -83,10 +83,10 @@ def get_stylesheet() -> str:
         background-color: {BG_MID};
         color: {TEXT};
         border: 1px solid {BORDER};
-        padding: 6px 16px;
+        padding: 4px 10px;
         border-radius: 3px;
         font-weight: bold;
-        font-size: 12px;
+        font-size: 11px;
     }}
     QPushButton:hover {{
         background-color: {BG_HOVER};
@@ -191,20 +191,20 @@ def get_stylesheet() -> str:
     }}
     QLabel#sectionTitle {{
         color: {ACCENT_CYAN};
-        font-size: 16px;
+        font-size: 13px;
         font-weight: bold;
-        letter-spacing: 2px;
+        letter-spacing: 1px;
     }}
     QLabel#statValue {{
         color: {TEXT_BRIGHT};
-        font-size: 22px;
+        font-size: 16px;
         font-weight: bold;
     }}
     QLabel#statLabel {{
         color: {TEXT_DIM};
-        font-size: 11px;
+        font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 0.5px;
     }}
     QLabel#accentGreen {{
         color: {INCOME_GREEN};
@@ -222,7 +222,7 @@ def get_stylesheet() -> str:
         background-color: {BG_MID};
         border: 1px solid {BORDER};
         border-radius: 4px;
-        padding: 16px;
+        padding: 10px;
     }}
     QFrame#statCard:hover {{
         border-color: {ACCENT_CYAN};

@@ -115,7 +115,7 @@ class DashboardWidget(QWidget):
         frame = QFrame()
         frame.setObjectName("statCard")
         vl = QVBoxLayout(frame)
-        vl.setContentsMargins(16, 12, 16, 12)
+        vl.setContentsMargins(10, 8, 10, 8)
         vl.setSpacing(4)
         val = QLabel("\u00a50")
         val.setObjectName("statValue")

@@ -26,12 +26,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.models.event import Event
+from src.models.event import Event, EventCategory
 from src.services.event_service import EventService
 from src.services.expense_service import ExpenseService
 from src.services.income_service import IncomeService
 from src.ui.dialogs.event_dialog import EventDialog
 from src.ui import theme as T
+
+# Categories that display a special emoji indicator on the month grid
+_SPECIAL_CATEGORIES = {EventCategory.BIRTHDAY, EventCategory.FAMILY}
 
 _WEEKDAY_HEADERS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 
@@ -114,13 +117,13 @@ class MonthGridWidget(QWidget):
         h = self.height()
         painter.fillRect(self.rect(), QColor(T.BG_DARKEST))
 
-        header_h = 24
+        header_h = 22
         cell_w = w / 7
         rows = 6
         cell_h = (h - header_h) / rows
 
         # Weekday headers
-        header_font = QFont("monospace", 9, QFont.Weight.Bold)
+        header_font = QFont("Meiryo UI", 8, QFont.Weight.Bold)
         painter.setFont(header_font)
         painter.setPen(QColor(T.ACCENT_CYAN))
         for col, hdr in enumerate(_WEEKDAY_HEADERS):
@@ -135,9 +138,10 @@ class MonthGridWidget(QWidget):
         days = list(cal_obj.itermonthdays(self._year, self._month))
         today = date.today()
 
-        day_font = QFont("monospace", 11, QFont.Weight.Bold)
-        small_font = QFont("monospace", 8)
-        badge_font = QFont("monospace", 8, QFont.Weight.Bold)
+        day_font = QFont("Meiryo UI", 9, QFont.Weight.Bold)
+        amount_font = QFont("Meiryo UI", 7)
+        badge_font = QFont("Meiryo UI", 7, QFont.Weight.Bold)
+        emoji_font = QFont("Segoe UI Emoji", 10)
         self._day_rects.clear()
 
         idx = 0
@@ -198,25 +202,9 @@ class MonthGridWidget(QWidget):
                 else:
                     painter.setPen(QColor(T.TEXT))
                 painter.drawText(
-                    QRectF(x + 4, y + 2, 24, 16),
+                    QRectF(x + 3, y + 2, 22, 14),
                     Qt.AlignmentFlag.AlignLeft, str(day),
                 )
-
-                # ── Financial dots (beside day number) ──
-                dot_x = x + 4 + 20
-                dot_cy = y + 9
-                has_income = self._income_by_day.get(day, 0) > 0
-                has_expense = self._expense_by_day.get(day, 0) > 0
-                if has_income:
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(QColor(T.INCOME_GREEN))
-                    painter.drawEllipse(QRectF(dot_x, dot_cy - 3, 6, 6))
-                    dot_x += 8
-                if has_expense:
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(QColor(T.EXPENSE_RED))
-                    painter.drawEllipse(QRectF(dot_x, dot_cy - 3, 6, 6))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
 
                 # ── Event count badge (top-right corner) ──
                 events_today = self._events_by_day.get(day, [])
@@ -226,9 +214,9 @@ class MonthGridWidget(QWidget):
                     painter.setFont(badge_font)
                     fm = painter.fontMetrics()
                     tw = fm.horizontalAdvance(badge_text)
-                    badge_w = max(tw + 6, 14)
-                    badge_h = 13
-                    badge_x = x + cell_w - badge_w - 4
+                    badge_w = max(tw + 5, 13)
+                    badge_h = 12
+                    badge_x = x + cell_w - badge_w - 3
                     badge_y = y + 3
                     badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
                     painter.setPen(Qt.PenStyle.NoPen)
@@ -237,40 +225,46 @@ class MonthGridWidget(QWidget):
                     painter.setBrush(badge_bg)
                     painter.drawRoundedRect(badge_rect, 3, 3)
                     painter.setPen(QColor(T.BG_DARKEST))
-                    painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
+                    painter.drawText(
+                        badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text,
+                    )
                     painter.setBrush(Qt.BrushStyle.NoBrush)
 
-                # ── Event indicators (below day number row) ──
-                if events_today:
-                    painter.setFont(small_font)
-                    ev_y = y + 20
-                    max_show = max(int((cell_h - 24) / 12), 1)
-                    for ev in events_today[:max_show]:
-                        if ev_y + 11 > y + cell_h - 2:
-                            break
-                        color = QColor(ev.display_color)
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.setBrush(color)
-                        painter.drawEllipse(QRectF(x + 4, ev_y + 1, 5, 5))
-                        painter.setPen(QColor(T.TEXT_DIM))
-                        painter.setBrush(Qt.BrushStyle.NoBrush)
-                        max_chars = max(int(cell_w / 7) - 2, 3)
-                        painter.drawText(
-                            QRectF(x + 11, ev_y - 1, cell_w - 16, 11),
-                            Qt.AlignmentFlag.AlignLeft
-                            | Qt.AlignmentFlag.AlignVCenter,
-                            ev.title[:max_chars],
-                        )
-                        ev_y += 12
+                # ── Revenue & expense amounts (below day number) ──
+                painter.setFont(amount_font)
+                info_y = y + 18
+                income_amt = self._income_by_day.get(day, 0)
+                expense_amt = self._expense_by_day.get(day, 0)
+                if income_amt > 0:
+                    painter.setPen(QColor(T.INCOME_GREEN))
+                    text = f"+\u00a5{income_amt:,}"
+                    painter.drawText(
+                        QRectF(x + 3, info_y, cell_w - 6, 11),
+                        Qt.AlignmentFlag.AlignLeft, text,
+                    )
+                    info_y += 11
+                if expense_amt > 0:
+                    painter.setPen(QColor(T.EXPENSE_RED))
+                    text = f"-\u00a5{expense_amt:,}"
+                    painter.drawText(
+                        QRectF(x + 3, info_y, cell_w - 6, 11),
+                        Qt.AlignmentFlag.AlignLeft, text,
+                    )
 
-                    remaining = num_events - max_show
-                    if remaining > 0 and ev_y + 10 < y + cell_h:
-                        painter.setPen(QColor(T.TEXT_DIM))
-                        painter.drawText(
-                            QRectF(x + 4, ev_y, cell_w - 8, 10),
-                            Qt.AlignmentFlag.AlignLeft,
-                            f"+{remaining}",
-                        )
+                # ── Birthday/anniversary emoji (bottom-right) ──
+                has_special = any(
+                    ev.category in _SPECIAL_CATEGORIES
+                    for ev in events_today
+                )
+                if has_special:
+                    painter.setFont(emoji_font)
+                    painter.setPen(QColor(T.TEXT_BRIGHT))
+                    painter.drawText(
+                        QRectF(
+                            x + cell_w - 18, y + cell_h - 16, 15, 14,
+                        ),
+                        Qt.AlignmentFlag.AlignCenter, "\U0001f382",
+                    )
 
         painter.end()
 
@@ -358,9 +352,9 @@ class ScheduleGridWidget(QWidget):
 
         painter.fillRect(self.rect(), QColor(T.BG_DARKEST))
 
-        time_font = QFont("monospace", 9)
-        event_font = QFont("monospace", 10, QFont.Weight.Bold)
-        detail_font = QFont("monospace", 8)
+        time_font = QFont("Meiryo UI", 8)
+        event_font = QFont("Meiryo UI", 9, QFont.Weight.Bold)
+        detail_font = QFont("Meiryo UI", 7)
 
         # ── Grid lines & time labels ──
         for slot in range(self._total_slots + 1):
@@ -596,18 +590,19 @@ class DayDetailPanel(QWidget):
         # Toggle bar
         toggle_bar = QHBoxLayout()
         toggle_bar.setSpacing(4)
-        self._schedule_btn = QPushButton("SCHEDULE")
-        self._schedule_btn.setFixedWidth(80)
+        self._schedule_btn = QPushButton("Schedule")
+        self._schedule_btn.setFixedSize(64, 22)
         self._schedule_btn.clicked.connect(
             lambda: self._stack.setCurrentIndex(0)
         )
-        self._list_btn = QPushButton("LIST")
-        self._list_btn.setFixedWidth(50)
+        self._list_btn = QPushButton("List")
+        self._list_btn.setFixedSize(40, 22)
         self._list_btn.clicked.connect(
             lambda: self._stack.setCurrentIndex(1)
         )
-        self._add_btn = QPushButton("+ ADD EVENT")
+        self._add_btn = QPushButton("+ Add")
         self._add_btn.setObjectName("accentBtn")
+        self._add_btn.setFixedHeight(22)
         self._add_btn.clicked.connect(self._on_add)
         toggle_bar.addWidget(self._schedule_btn)
         toggle_bar.addWidget(self._list_btn)
